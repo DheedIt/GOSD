@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -7,11 +8,15 @@ public class OpenMeteoClient(HttpClient http)
 {
     private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
+    // Use InvariantCulture so coordinates always use '.' as decimal separator
+    // regardless of the OS locale (critical on Russian Windows where default is ',')
+    private static string Coord(double v) => v.ToString("F6", CultureInfo.InvariantCulture);
+
     public async Task<WeatherResponse> GetWeatherAsync(double lat, double lon, int pastDays,
         CancellationToken ct = default)
     {
         var url = $"https://api.open-meteo.com/v1/forecast"
-                + $"?latitude={lat:F6}&longitude={lon:F6}"
+                + $"?latitude={Coord(lat)}&longitude={Coord(lon)}"
                 + $"&hourly=temperature_2m,relative_humidity_2m,surface_pressure"
                 + $"&timezone=auto&past_days={pastDays}&forecast_days=1";
 
@@ -24,7 +29,7 @@ public class OpenMeteoClient(HttpClient http)
         CancellationToken ct = default)
     {
         var url = $"https://air-quality-api.open-meteo.com/v1/air-quality"
-                + $"?latitude={lat:F6}&longitude={lon:F6}"
+                + $"?latitude={Coord(lat)}&longitude={Coord(lon)}"
                 + $"&hourly=us_aqi"
                 + $"&timezone=auto&past_days={pastDays}&forecast_days=1";
 
