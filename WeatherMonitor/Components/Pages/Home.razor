@@ -1,0 +1,291 @@
+@page "/"
+@rendermode InteractiveServer
+@inject WeatherDataService DataService
+@inject WeatherCollectorWorker Collector
+@inject IJSRuntime JS
+
+<PageTitle>Мониторинг окружающей среды</PageTitle>
+
+<div class="dashboard">
+
+    <header class="dashboard-header">
+        <h1>Мониторинг окружающей среды</h1>
+        <p class="subtitle">Данные Open-Meteo: температура, влажность, давление, качество воздуха</p>
+    </header>
+
+    @* ── Controls ─────────────────────────────────────────────────────────── *@
+    <section class="controls-panel">
+        <div class="controls-row">
+            <div class="control-item">
+                <label class="control-label">Город</label>
+                <select class="form-select" @bind="_cityId">
+                    <option value="0">— выберите город —</option>
+                    @foreach (var city in _cities)
+                    {
+                        <option value="@city.Id">@city.Name</option>
+                    }
+                </select>
+            </div>
+
+            <div class="control-item">
+                <label class="control-label">Дата начала</label>
+                <input type="date" class="form-input" @bind="_dateFrom" />
+            </div>
+
+            <div class="control-item">
+                <label class="control-label">Дата окончания</label>
+                <input type="date" class="form-input" @bind="_dateTo" />
+            </div>
+
+            <div class="control-item control-actions">
+                <button class="btn btn-primary" @onclick="HandleSearch" disabled="@_isLoading">
+                    @if (_isLoading)
+                    {
+                        <span class="spinner-sm"></span>
+                        <span>Загрузка...</span>
+                    }
+                    else
+                    {
+                        <span>Показать</span>
+                    }
+                </button>
+            </div>
+        </div>
+
+        <div class="collect-row">
+            <span class="collect-label">Собрать данные за:</span>
+            <select class="form-select form-select-sm" @bind="_pastDays">
+                <option value="1">1 день</option>
+                <option value="7">7 дней</option>
+                <option value="30">30 дней</option>
+                <option value="92">92 дня</option>
+            </select>
+            <button class="btn btn-secondary" @onclick="HandleCollect" disabled="@_isCollecting">
+                @if (_isCollecting)
+                {
+                    <span class="spinner-sm"></span>
+                    <span>Сбор...</span>
+                }
+                else
+                {
+                    <span>Собрать данные</span>
+                }
+            </button>
+
+            @if (!string.IsNullOrEmpty(_collectMsg))
+            {
+                <span class="collect-msg @_collectMsgCss">@_collectMsg</span>
+            }
+        </div>
+    </section>
+
+    @* ── Empty state ───────────────────────────────────────────────────────── *@
+    @if (_isEmpty)
+    {
+        <div class="empty-state">
+            <div class="empty-icon">📭</div>
+            <p>За выбранный период данных не найдено.</p>
+            <p class="empty-hint">Попробуйте изменить даты или нажмите <strong>Собрать данные</strong>.</p>
+        </div>
+    }
+
+    @* ── Charts ────────────────────────────────────────────────────────────── *@
+    @if (_records.Count > 0)
+    {
+        <p class="record-count">Загружено записей: <strong>@_records.Count</strong></p>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3 class="chart-title">Температура воздуха, °C</h3>
+                <div class="chart-container">
+                    <canvas id="chart-temp"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3 class="chart-title">Относительная влажность, %</h3>
+                <div class="chart-container">
+                    <canvas id="chart-humid"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3 class="chart-title">Атмосферное давление, hPa</h3>
+                <div class="chart-container">
+                    <canvas id="chart-pressure"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3 class="chart-title">Индекс качества воздуха (US AQI)</h3>
+                <div class="chart-container">
+                    <canvas id="chart-aqi"></canvas>
+                </div>
+            </div>
+        </div>
+    }
+
+</div>
+
+@code {
+    // ── State ──────────────────────────────────────────────────────────────────
+    private List<City> _cities = [];
+    private List<WeatherRecord> _records = [];
+
+    private int _cityId;
+    private DateTime? _dateFrom;
+    private DateTime? _dateTo;
+    private int _pastDays = 7;
+
+    private bool _isLoading;
+    private bool _isEmpty;
+    private bool _isCollecting;
+    private bool _pendingChartRender;
+
+    private string _collectMsg = string.Empty;
+    private string _collectMsgCss = string.Empty;
+
+    // ── Lifecycle ──────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        _cities = await DataService.GetCitiesAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_pendingChartRender)
+        {
+            _pendingChartRender = false;
+            await RenderChartsAsync();
+        }
+    }
+
+    // ── Handlers ───────────────────────────────────────────────────────────────
+    private async Task HandleSearch()
+    {
+        if (_cityId == 0) return;
+
+        _isLoading = true;
+        _isEmpty = false;
+        _records = [];
+        StateHasChanged();
+
+        try
+        {
+            _records = await DataService.GetWeatherDataAsync(_cityId, _dateFrom, _dateTo);
+            _isEmpty = _records.Count == 0;
+            if (_records.Count > 0)
+                _pendingChartRender = true;
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleCollect()
+    {
+        _isCollecting = true;
+        _collectMsg = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            await Collector.TriggerCollectionAsync(pastDays: _pastDays);
+            _collectMsg = $"Данные успешно собраны (за {_pastDays} дн.)";
+            _collectMsgCss = "msg-ok";
+        }
+        catch (Exception ex)
+        {
+            _collectMsg = $"Ошибка: {ex.Message}";
+            _collectMsgCss = "msg-err";
+        }
+        finally
+        {
+            _isCollecting = false;
+            StateHasChanged();
+        }
+    }
+
+    // ── Chart rendering ────────────────────────────────────────────────────────
+    private async Task RenderChartsAsync()
+    {
+        var labels = _records.Select(r => r.Timestamp.ToString("o")).ToArray();
+        bool sparse = _records.Count > 300; // hide dots on large datasets
+
+        await DrawAsync("chart-temp",
+            labels,
+            ToDoubles(_records.Select(r => r.Temperature2m)),
+            "°C", "#e74c3c", "rgba(231,76,60,0.12)", sparse);
+
+        await DrawAsync("chart-humid",
+            labels,
+            ToDoubles(_records.Select(r => r.RelativeHumidity2m)),
+            "%", "#2980b9", "rgba(41,128,185,0.12)", sparse);
+
+        await DrawAsync("chart-pressure",
+            labels,
+            ToDoubles(_records.Select(r => r.SurfacePressure)),
+            "hPa", "#27ae60", "rgba(39,174,96,0.12)", sparse);
+
+        await DrawAsync("chart-aqi",
+            labels,
+            _records.Select(r => r.UsAqi.HasValue ? (double?)r.UsAqi.Value : null).ToArray(),
+            "AQI", "#8e44ad", "rgba(142,68,173,0.12)", sparse);
+    }
+
+    private async Task DrawAsync(string id, string[] labels, double?[] data,
+        string yUnit, string borderColor, string bgColor, bool sparse)
+    {
+        var config = new
+        {
+            type = "line",
+            data = new
+            {
+                labels,
+                datasets = new[]
+                {
+                    new
+                    {
+                        data,
+                        borderColor,
+                        backgroundColor = bgColor,
+                        borderWidth = 1.5,
+                        pointRadius = sparse ? 0 : 2,
+                        fill = true,
+                        tension = 0.3,
+                        spanGaps = true,
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true,
+                maintainAspectRatio = true,
+                interaction = new { intersect = false, mode = "index" },
+                plugins = new { legend = new { display = false } },
+                scales = new
+                {
+                    x = new
+                    {
+                        type = "time",
+                        time = new
+                        {
+                            tooltipFormat = "dd MMM yyyy HH:mm",
+                            displayFormats = new { hour = "dd MMM HH:mm", day = "dd MMM" }
+                        },
+                        ticks = new { maxTicksLimit = 10 }
+                    },
+                    y = new
+                    {
+                        title = new { display = true, text = yUnit },
+                        beginAtZero = false
+                    }
+                }
+            }
+        };
+
+        await JS.InvokeVoidAsync("chartInterop.create", id, config);
+    }
+
+    private static double?[] ToDoubles(IEnumerable<decimal?> values)
+        => values.Select(v => v.HasValue ? (double?)Math.Round((double)v.Value, 2) : null).ToArray();
+}
