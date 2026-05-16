@@ -94,11 +94,12 @@ public class WeatherCollectorWorker(
         var maxTs = times.Max();
 
         // Bulk-load existing timestamps to avoid per-row duplicate checks
-        var existing = await db.WeatherRecords
+        var existing = (await db.WeatherRecords
             .Where(r => r.CityId == city.Id && r.SourceId == source.Id
                         && r.Timestamp >= minTs && r.Timestamp <= maxTs)
             .Select(r => r.Timestamp)
-            .ToHashSetAsync(ct);
+            .ToListAsync(ct))
+            .ToHashSet();
 
         var toInsert = new List<WeatherRecord>();
         for (var i = 0; i < times.Count; i++)
