@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/zhula/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/9e12fdd9-88b2-4dd9-9bfb-b9a4aa22d3a5/80791f27-0ff1-490f-977c-ff6e092eb830/skills/docx/**)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}
