@@ -12,9 +12,12 @@ builder.Services.AddDbContextFactory<AppDbContext>(opt =>
     opt.UseMySql(connStr, ServerVersion.AutoDetect(connStr)));
 
 // ─── HTTP clients ──────────────────────────────────────────────────────────────
-var timeoutSec = builder.Configuration.GetValue<int>("ApiTimeoutSeconds", 30);
+// HttpClient.Timeout is set above ApiTimeoutSeconds so the per-city CancellationTokenSource
+// in WeatherCollectorWorker always fires first — giving us a clean OperationCanceledException
+// instead of HttpClient's internal timeout wrapping.
+var apiTimeoutSec = builder.Configuration.GetValue<int>("ApiTimeoutSeconds", 60);
 builder.Services.AddHttpClient<OpenMeteoClient>(c =>
-    c.Timeout = TimeSpan.FromSeconds(timeoutSec));
+    c.Timeout = TimeSpan.FromSeconds(apiTimeoutSec + 30));
 
 // ─── Application services ──────────────────────────────────────────────────────
 builder.Services.AddScoped<WeatherDataService>();

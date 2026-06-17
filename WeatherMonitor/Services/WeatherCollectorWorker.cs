@@ -13,6 +13,10 @@ public class WeatherCollectorWorker(
     private readonly TimeSpan _interval =
         TimeSpan.FromMinutes(config.GetValue<int>("CollectIntervalMinutes", 60));
 
+    // Per-city request timeout — separate from the host stopping token
+    private readonly TimeSpan _apiTimeout =
+        TimeSpan.FromSeconds(config.GetValue<int>("ApiTimeoutSeconds", 60));
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Collect 7 days of history on first startup
@@ -45,15 +49,27 @@ public class WeatherCollectorWorker(
 
         foreach (var city in cities)
         {
+            // Per-city CTS: cancels either when host stops OR when per-city timeout fires.
+            // Keeps cities independent — one hanging request doesn't block the others.
+            using var cityCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cityCts.CancelAfter(_apiTimeout);
+
             try
             {
-                await CollectForCityAsync(db, meteoClient, city, source, pastDays, ct);
+                await CollectForCityAsync(db, meteoClient, city, source, pastDays, cityCts.Token);
             }
-            catch (HttpRequestException ex) when (ex.InnerException is TaskCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                var msg = $"Timeout fetching data for {city.Name}";
+                // Host is shutting down — stop the loop cleanly without logging an error
+                logger.LogInformation("Collection loop cancelled (host stopping)");
+                return;
+            }
+            catch (OperationCanceledException ex)
+            {
+                // Per-city timeout fired (cityCts.CancelAfter) — not the host stopping
+                var msg = $"API request timed out for {city.Name} (limit: {_apiTimeout.TotalSeconds}s)";
                 logger.LogWarning(msg);
-                await LogErrorAsync(db, city.Name, "TimeoutError", msg);
+                await LogErrorAsync(db, city.Name, "TimeoutError", msg, ex.ToString());
             }
             catch (HttpRequestException ex)
             {
